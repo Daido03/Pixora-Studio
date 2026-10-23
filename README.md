@@ -1,31 +1,24 @@
-# PIXORA Studio — starter 0.1
+# PIXORA Image Editor — v0.2
 
-A static, browser-based image-editor foundation designed to be easy to host as a PWA.
+A more complete Photoshop-inspired browser editor foundation.
 
-## Included in this first build
-- Photoshop-inspired dark workspace
-- Open image, blank canvas, and PNG export
-- Layer list with visibility, opacity, duplicate, delete, and blend modes
-- Selected-layer brightness, contrast, and saturation preview/export
-- Zoom controls and fit-to-screen
-- Basic brush stroke support
-- PWA manifest and service worker for install/offline shell caching
-- Keyboard shortcuts: Ctrl/Cmd+O, Ctrl/Cmd+S (placeholder), V, B, E, T, C
+## Included
+- Dark desktop-style editing workspace, menu bar, tool rail, options bar, tabs, status bar, and docked Layers / Properties / History panels
+- Open image and create blank document
+- Multiple layers, visibility, duplicate, delete, rename, opacity, fill, blend modes
+- Brush and eraser strokes, text placement, eyedropper
+- Brightness, contrast, saturation, hue adjustments
+- Grayscale, sepia, invert filters applied to the selected layer
+- Canvas resize, zoom controls, PNG export
+- Save/open editable `.pixora` JSON project files
+- Keyboard shortcuts: Ctrl/Cmd+O, Ctrl/Cmd+N, Ctrl/Cmd+S, B, E, V, T, Z, C, Delete
+- PWA manifest and offline shell cache
 
-## Important limitations
-This is an early foundation, not a Photoshop replacement yet. Crop, eraser, text, shape, masks, robust undo/redo, native project save/open, color management, PSD import/export, and advanced filters are future modules. Large-canvas history snapshots may be memory-intensive.
+## Important limits
+This is not a 1:1 Photoshop replacement yet. Marquee/lasso/quick selection, crop, pen, clone/healing, gradients, masks, full transform, robust undo/redo, smart objects, PSD support, color management, and AI tools need dedicated implementations. Some menu items are scaffolding or apply simple browser filters. Browser canvas memory limits apply to large documents.
 
-## Run locally
-Serve this folder over HTTP (service workers do not work reliably from `file://`). For example, with Python installed:
-`python -m http.server 8000`
-Then open `http://localhost:8000`.
+## Deploy
+Upload the files in this folder to the root of your existing `pixora-studio` GitHub repository, replacing the previous files. Then open Settings → Pages and keep `main` / `/ (root)`. If the old version remains after deployment, hard refresh the page or clear the site's cached data; the service worker cache name was bumped for v0.2.
 
-## Deploy on GitHub Pages
-1. Create a new public GitHub repository named `pixora-studio`.
-2. Upload all files from this folder to the repository root.
-3. Open **Settings → Pages**.
-4. Under Build and deployment, choose **Deploy from a branch**, select `main` and `/ (root)`, then Save.
-5. Wait for the published URL to appear.
-
-## Install as a PWA
-Open the published HTTPS site in a supported browser. On iPhone/iPad Safari, use Share → Add to Home Screen. PWA behavior varies by browser and OS version.
+## PWA
+Open the HTTPS GitHub Pages URL. On iPad Safari, Share → Add to Home Screen. Browser and OS PWA behavior may vary.

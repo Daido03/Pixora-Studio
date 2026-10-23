@@ -1,135 +1,49 @@
 (() => {
-  const $ = (id) => document.getElementById(id);
-  const canvas = $("composite-canvas");
-  const ctx = canvas.getContext("2d", { willReadFrequently: false });
-  const stage = $("stage");
-  const fileInput = $("file-input");
-  const layersList = $("layers-list");
-  const state = { width: 0, height: 0, layers: [], selectedId: null, zoom: 1, tool: "move", history: [], future: [], drawing: false, lastPoint: null, docName: "Untitled document", adjustments: { brightness:100, contrast:100, saturation:100 } };
-  let nextId = 1, toastTimer;
-
-  function toast(message) {
-    const el = $("toast"); el.textContent = message; el.classList.add("show");
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 2300);
-  }
-  function selectedLayer() { return state.layers.find(l => l.id === state.selectedId) || null; }
-  function snapshot() {
-    try {
-      const snap = state.layers.map(l => ({...l, canvas: l.canvas.toDataURL("image/png")}));
-      state.history.push(JSON.stringify({layers:snap,selectedId:state.selectedId,width:state.width,height:state.height,docName:state.docName,adjustments:{...state.adjustments}}));
-      if (state.history.length > 25) state.history.shift();
-      state.future = [];
-    } catch (e) { /* Large canvas snapshots can exceed browser limits; editing still works. */ }
-  }
-  function restore(serialized) {
-    const s = JSON.parse(serialized); state.layers = []; state.selectedId = s.selectedId;
-    state.width=s.width; state.height=s.height; state.docName=s.docName; state.adjustments=s.adjustments || {brightness:100,contrast:100,saturation:100};
-    let pending = s.layers.length;
-    if (!pending) { renderLayers(); render(); return; }
-    s.layers.forEach(item => { const img = new Image(); img.onload=()=>{const c=document.createElement("canvas");c.width=state.width;c.height=state.height;c.getContext("2d").drawImage(img,0,0);state.layers.push({...item,canvas:c});pending--;if(!pending){state.layers.sort((a,b)=>a.order-b.order);renderLayers();render();}};img.src=item.canvas; });
-  }
-  function markChange() { snapshot(); render(); renderLayers(); }
-  function createLayer(name, blank=true) {
-    const c = document.createElement("canvas"); c.width=state.width||1200; c.height=state.height||800;
-    const layer={id:nextId++,name,canvas:c,visible:true,opacity:1,blend:"source-over",order:state.layers.length};
-    state.layers.push(layer); state.selectedId=layer.id;
-    if (!blank && !state.width) { state.width=c.width; state.height=c.height; }
-    return layer;
-  }
-  function normalizeOrders() { state.layers.forEach((l,i)=>l.order=i); }
-  function render() {
-    if (!state.width || !state.height) { canvas.style.display="none"; $("empty-state").style.display="block"; return; }
-    canvas.width=state.width; canvas.height=state.height;
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    const sorted=[...state.layers].sort((a,b)=>a.order-b.order);
-    for (const layer of sorted) {
-      if (!layer.visible) continue;
-      ctx.save(); ctx.globalAlpha=layer.opacity; ctx.globalCompositeOperation=layer.blend;
-      if (layer.id===state.selectedId) {
-        const a=state.adjustments;
-        ctx.filter=`brightness(${a.brightness}%) contrast(${a.contrast}%) saturate(${a.saturation}%)`;
-      } else ctx.filter="none";
-      ctx.drawImage(layer.canvas,0,0); ctx.restore();
-    }
-    canvas.style.display="block"; $("empty-state").style.display="none";
-    canvas.style.width=`${Math.round(state.width*state.zoom)}px`; canvas.style.height=`${Math.round(state.height*state.zoom)}px`;
-    $("zoom-label").textContent=`${Math.round(state.zoom*100)}%`;
-    $("canvas-info").textContent=`${state.width} × ${state.height} px`;
-    $("doc-status").textContent=state.layers.length ? "Unsaved project" : "No document";
-    $("document-name").textContent=state.docName;
-  }
-  function renderLayers() {
-    layersList.innerHTML="";
-    if (!state.layers.length) { layersList.innerHTML='<div class="layers-placeholder">Your layers will appear here.</div>'; return; }
-    [...state.layers].sort((a,b)=>b.order-a.order).forEach(layer=>{
-      const row=document.createElement("div"); row.className="layer-row"+(layer.id===state.selectedId?" selected":""); row.dataset.id=layer.id;
-      const vis=document.createElement("button"); vis.className="layer-visibility"; vis.title=layer.visible?"Hide layer":"Show layer"; vis.textContent=layer.visible?"◉":"○";
-      vis.addEventListener("click",e=>{e.stopPropagation();snapshot();layer.visible=!layer.visible;render();renderLayers();});
-      const thumb=document.createElement("div");thumb.className="layer-thumb";thumb.textContent=layer.canvas.getContext("2d").getImageData(0,0,1,1).data[3]?"▧":"◇";
-      const name=document.createElement("div");name.className="layer-name";name.textContent=layer.name;
-      row.append(vis,thumb,name);row.addEventListener("click",()=>{state.selectedId=layer.id;syncControls();render();renderLayers();});layersList.append(row);
-    });
-    syncControls();
-  }
-  function syncControls() {
-    const l=selectedLayer();
-    $("layer-opacity").value=l?Math.round(l.opacity*100):100;$("opacity-value").textContent=`${$("layer-opacity").value}%`;
-    $("blend-mode").value=l?l.blend:"source-over";
-    $("brightness").value=state.adjustments.brightness;$("brightness-value").textContent=state.adjustments.brightness+"%";
-    $("contrast").value=state.adjustments.contrast;$("contrast-value").textContent=state.adjustments.contrast+"%";
-    $("saturation").value=state.adjustments.saturation;$("saturation-value").textContent=state.adjustments.saturation+"%";
-  }
-  function openFile(file) {
-    if (!file) return;
-    if (!file.type.startsWith("image/")) { toast("Please choose an image file."); return; }
-    const url=URL.createObjectURL(file), img=new Image();
-    img.onload=()=> {
-      state.width=img.naturalWidth;state.height=img.naturalHeight;state.layers=[];state.history=[];state.future=[];
-      state.docName=file.name.replace(/\.[^.]+$/,"");state.adjustments={brightness:100,contrast:100,saturation:100};
-      const l=createLayer(file.name.replace(/\.[^.]+$/,""));l.canvas.getContext("2d").drawImage(img,0,0);
-      state.zoom=Math.min(1,(stage.clientWidth-56)/state.width,(stage.clientHeight-56)/state.height);state.zoom=Math.max(.05,state.zoom);
-      URL.revokeObjectURL(url);renderLayers();render();toast("Image opened.");
-    };
-    img.onerror=()=>{URL.revokeObjectURL(url);toast("Could not open this image.");};img.src=url;
-  }
-  function newDocument() {
-    const w=Number(prompt("Canvas width in pixels", "1200")); if(!w||w<1||w>12000)return;
-    const h=Number(prompt("Canvas height in pixels", "800")); if(!h||h<1||h>12000)return;
-    state.width=Math.round(w);state.height=Math.round(h);state.layers=[];state.history=[];state.future=[];state.docName="Untitled";state.adjustments={brightness:100,contrast:100,saturation:100};
-    const bg=createLayer("Background");bg.canvas.getContext("2d").clearRect(0,0,w,h);state.zoom=Math.min(1,(stage.clientWidth-56)/w,(stage.clientHeight-56)/h);state.zoom=Math.max(.05,state.zoom);
-    renderLayers();render();toast("Blank document created.");
-  }
-  function exportImage() {
-    if (!state.width) {toast("Open an image first.");return;}
-    const out=document.createElement("canvas");out.width=state.width;out.height=state.height;const o=out.getContext("2d");
-    [...state.layers].sort((a,b)=>a.order-b.order).forEach(l=>{if(!l.visible)return;o.save();o.globalAlpha=l.opacity;o.globalCompositeOperation=l.blend;o.filter=l.id===state.selectedId?`brightness(${state.adjustments.brightness}%) contrast(${state.adjustments.contrast}%) saturate(${state.adjustments.saturation}%)`:"none";o.drawImage(l.canvas,0,0);o.restore();});
-    const a=document.createElement("a");a.download=(state.docName||"pixora-export")+".png";a.href=out.toDataURL("image/png");a.click();toast("PNG export started.");
-  }
-  $("open-empty").addEventListener("click",()=>fileInput.click());$("file-input").addEventListener("change",e=>openFile(e.target.files[0]));
-  $("new-empty").addEventListener("click",newDocument);$("export-btn").addEventListener("click",exportImage);
-  $("add-layer").addEventListener("click",()=>{if(!state.width){newDocument();return;}snapshot();createLayer("Layer "+nextId);renderLayers();render();});
-  $("duplicate-layer").addEventListener("click",()=>{const l=selectedLayer();if(!l)return toast("Select a layer first.");snapshot();const c=document.createElement("canvas");c.width=state.width;c.height=state.height;c.getContext("2d").drawImage(l.canvas,0,0);const n={...l,id:nextId++,name:l.name+" copy",canvas:c,order:Math.max(...state.layers.map(x=>x.order))+1};state.layers.push(n);state.selectedId=n.id;renderLayers();render();});
-  $("delete-layer").addEventListener("click",()=>{const l=selectedLayer();if(!l)return;snapshot();state.layers=state.layers.filter(x=>x.id!==l.id);normalizeOrders();state.selectedId=state.layers.length?state.layers[state.layers.length-1].id:null;renderLayers();render();});
-  $("layer-opacity").addEventListener("input",e=>{const l=selectedLayer();if(!l)return;l.opacity=Number(e.target.value)/100;$("opacity-value").textContent=e.target.value+"%";render();});
-  $("layer-opacity").addEventListener("change",()=>{snapshot();renderLayers();});
-  $("blend-mode").addEventListener("change",e=>{const l=selectedLayer();if(!l)return;snapshot();l.blend=e.target.value;render();renderLayers();});
-  ["brightness","contrast","saturation"].forEach(key=>$(key).addEventListener("input",e=>{state.adjustments[key]=Number(e.target.value);$(key+"-value").textContent=e.target.value+"%";render();}));
-  ["brightness","contrast","saturation"].forEach(key=>$(key).addEventListener("change",snapshot));
-  $("reset-adjustments").addEventListener("click",()=>{snapshot();state.adjustments={brightness:100,contrast:100,saturation:100};syncControls();render();});
-  $("zoom-in").addEventListener("click",()=>{state.zoom=Math.min(4,state.zoom*1.2);render();});$("zoom-out").addEventListener("click",()=>{state.zoom=Math.max(.05,state.zoom/1.2);render();});
-  $("fit-btn").addEventListener("click",()=>{if(!state.width)return;state.zoom=Math.max(.05,Math.min(1,(stage.clientWidth-56)/state.width,(stage.clientHeight-56)/state.height));render();});
-  document.querySelectorAll(".tool").forEach(btn=>btn.addEventListener("click",()=>{state.tool=btn.dataset.tool;document.querySelectorAll(".tool").forEach(b=>b.classList.toggle("active",b===btn));toast(btn.dataset.tool==="move"?"Move tool selected":btn.dataset.tool+" tool selected — tool implementation is coming in a later module.");}));
-  document.querySelectorAll(".panel-tabs button").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll(".panel-tabs button").forEach(b=>b.classList.toggle("selected",b===btn));$("layers-panel").classList.toggle("hidden",btn.dataset.panel!=="layers");$("properties-panel").classList.toggle("hidden",btn.dataset.panel!=="properties");}));
-  document.querySelectorAll(".main-menu button").forEach(btn=>btn.addEventListener("click",()=>{const menu=btn.dataset.menu;if(menu==="File"){const choice=prompt("File menu: type OPEN, NEW, or EXPORT","OPEN");if(!choice)return;if(choice.toUpperCase()==="OPEN")fileInput.click();else if(choice.toUpperCase()==="NEW")newDocument();else if(choice.toUpperCase()==="EXPORT")exportImage();}else toast(menu+" menu actions will be expanded in later modules.");}));
-  document.addEventListener("keydown",e=>{if(["INPUT","TEXTAREA","SELECT"].includes(document.activeElement.tagName))return;const k=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&k==="o"){e.preventDefault();fileInput.click();}else if((e.ctrlKey||e.metaKey)&&k==="s"){e.preventDefault();toast("Project-file saving is planned for the next foundation update.");}else if(k==="v")document.querySelector('[data-tool="move"]').click();else if(k==="b")document.querySelector('[data-tool="brush"]').click();else if(k==="e")document.querySelector('[data-tool="eraser"]').click();else if(k==="t")document.querySelector('[data-tool="text"]').click();else if(k==="c")document.querySelector('[data-tool="crop"]').click();});
-  // Minimal drawing support for the Brush tool; full stroke history and eraser arrive with the tool module.
-  function pointFromEvent(e){const r=canvas.getBoundingClientRect();return {x:(e.clientX-r.left)/state.zoom,y:(e.clientY-r.top)/state.zoom};}
-  canvas.addEventListener("pointerdown",e=>{if(!state.width||state.tool!=="brush")return;const l=selectedLayer();if(!l)return;snapshot();state.drawing=true;state.lastPoint=pointFromEvent(e);canvas.setPointerCapture(e.pointerId);});
-  canvas.addEventListener("pointermove",e=>{if(!state.drawing||state.tool!=="brush")return;const p=pointFromEvent(e),l=selectedLayer(),c=l.canvas.getContext("2d");c.strokeStyle=$("brush-color").value;c.lineWidth=8/state.zoom;c.lineCap="round";c.lineJoin="round";c.beginPath();c.moveTo(state.lastPoint.x,state.lastPoint.y);c.lineTo(p.x,p.y);c.stroke();state.lastPoint=p;render();});
-  canvas.addEventListener("pointerup",()=>{if(state.drawing){state.drawing=false;state.lastPoint=null;renderLayers();}});
-  canvas.addEventListener("pointercancel",()=>{state.drawing=false;state.lastPoint=null;});
-  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-    window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
-  }
-  renderLayers();render();
+const $=id=>document.getElementById(id), canvas=$("canvas"), ctx=canvas.getContext("2d"), scroll=$("canvas-scroll"), wrap=$("canvas-wrap");
+const S={w:0,h:0,layers:[],selected:null,zoom:1,tool:"move",name:"Untitled-1",adjust:{brightness:100,contrast:100,saturation:100,hue:0},history:[],future:[],drawing:false,last:null,shapeStart:null};
+let idCounter=1,toastTimer=null,historyIndex=-1;
+function toast(s){const t=$("toast");t.textContent=s;t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),2300)}
+function sel(){return S.layers.find(x=>x.id===S.selected)||null}
+function record(label,save=true){if(save){try{const snap={w:S.w,h:S.h,name:S.name,selected:S.selected,adjust:{...S.adjust},layers:S.layers.map(l=>({id:l.id,name:l.name,visible:l.visible,opacity:l.opacity,fill:l.fill,blend:l.blend,kind:l.kind,data:l.canvas.toDataURL("image/png")}))};S.history=S.history.slice(0,historyIndex+1);S.history.push({label,data:JSON.stringify(snap)});if(S.history.length>30)S.history.shift();historyIndex=S.history.length-1;}catch(e){toast("History snapshot skipped for memory safety.")}}renderHistory()}
+function restore(entry){const s=JSON.parse(entry.data);S.w=s.w;S.h=s.h;S.name=s.name;S.selected=s.selected;S.adjust=s.adjust;S.layers=[];let remaining=s.layers.length;if(!remaining){renderAll();return}s.layers.forEach(item=>{const img=new Image();img.onload=()=>{const c=document.createElement("canvas");c.width=S.w;c.height=S.h;c.getContext("2d").drawImage(img,0,0);S.layers.push({...item,canvas:c});if(!--remaining){S.layers.sort((a,b)=>a.order-b.order);renderAll()}};img.src=item.data})}
+function addLayer(name,kind="pixel"){const c=document.createElement("canvas");c.width=S.w;c.height=S.h;const l={id:idCounter++,name,canvas:c,visible:true,opacity:1,fill:1,blend:"source-over",kind,order:S.layers.length};S.layers.push(l);S.selected=l.id;return l}
+function renumber(){S.layers.forEach((l,i)=>l.order=i)}
+function renderAll(){renderCanvas();renderLayers();syncUI();$("doc-title").textContent=S.name;$("tab-title").textContent=S.name;$("dimensions").textContent=S.w?`${S.w} × ${S.h} px`:"—"}
+function renderCanvas(){if(!S.w||!S.h){wrap.style.display="none";$("welcome").style.display="block";return}canvas.width=S.w;canvas.height=S.h;ctx.clearRect(0,0,S.w,S.h);[...S.layers].sort((a,b)=>a.order-b.order).forEach(l=>{if(!l.visible)return;ctx.save();ctx.globalAlpha=l.opacity*l.fill;ctx.globalCompositeOperation=l.blend;ctx.filter=l.id===S.selected?`brightness(${S.adjust.brightness}%) contrast(${S.adjust.contrast}%) saturate(${S.adjust.saturation}%) hue-rotate(${S.adjust.hue}deg)`:"none";ctx.drawImage(l.canvas,0,0);ctx.restore()});wrap.style.display="block";$("welcome").style.display="none";wrap.style.width=Math.round(S.w*S.zoom)+"px";wrap.style.height=Math.round(S.h*S.zoom)+"px";canvas.style.width=wrap.style.width;canvas.style.height=wrap.style.height;$("zoom-level").textContent=Math.round(S.zoom*100)+"%";$("status-left").textContent=`${S.tool[0].toUpperCase()+S.tool.slice(1)} Tool`; }
+function renderLayers(){const list=$("layer-list");list.innerHTML="";const query=$("layer-search").value.toLowerCase();const arr=[...S.layers].sort((a,b)=>b.order-a.order).filter(l=>l.name.toLowerCase().includes(query));if(!arr.length){list.innerHTML='<div class="layer-empty">No matching layers</div>';return}arr.forEach(l=>{const row=document.createElement("div");row.className="layer-row"+(l.id===S.selected?" selected":"");const eye=document.createElement("button");eye.className="layer-eye";eye.textContent=l.visible?"◉":"○";eye.title="Toggle visibility";eye.onclick=e=>{e.stopPropagation();record("Toggle visibility");l.visible=!l.visible;renderAll()};const thumb=document.createElement("div");thumb.className="layer-thumb";thumb.textContent=l.kind==="text"?"T":l.kind==="shape"?"▱":"▧";const text=document.createElement("div");text.className="layer-text";const name=document.createElement("div");name.className="layer-name";name.textContent=l.name;const kind=document.createElement("div");kind.className="layer-kind";kind.textContent=l.kind==="pixel"?"Pixel layer":l.kind==="text"?"Type layer":l.kind==="shape"?"Shape layer":l.kind; text.append(name,kind);const lock=document.createElement("span");lock.className="layer-lock";lock.textContent="◇";row.append(eye,thumb,text,lock);row.onclick=()=>{S.selected=l.id;renderAll()};row.oncontextmenu=e=>{e.preventDefault();showContext(e.clientX,e.clientY,[["Rename layer",()=>renameLayer(l)],["Duplicate layer",()=>duplicateLayer()],["Delete layer",()=>deleteLayer()]])};list.append(row)})}
+function syncUI(){const l=sel();$("opacity").value=l?Math.round(l.opacity*100):100;$("opacity-label").textContent=$("opacity").value+"%";$("fill").value=l?Math.round(l.fill*100):100;$("fill-label").textContent=$("fill").value+"%";$("blend-mode").value=l?l.blend:"source-over";for(const k of ["brightness","contrast","saturation","hue"]){$(k).value=S.adjust[k];$(k+"-label").textContent=k==="hue"?S.adjust[k]+"°":S.adjust[k]+"%"}$("canvas-width").value=S.w||1200;$("canvas-height").value=S.h||800;$("active-tool-name").textContent=({move:"Move Tool",marquee:"Rectangular Marquee Tool",lasso:"Lasso Tool",quickselect:"Quick Selection Tool",crop:"Crop Tool",eyedropper:"Eyedropper Tool",brush:"Brush Tool",healing:"Healing Brush Tool",clone:"Clone Stamp Tool",eraser:"Eraser Tool",gradient:"Gradient Tool",blur:"Blur Tool",dodge:"Dodge Tool",pen:"Pen Tool",text:"Type Tool",path:"Path Selection Tool",shape:"Rectangle Tool",hand:"Hand Tool",zoom:"Zoom Tool"})[S.tool]||"Tool"}
+function renderHistory(){const box=$("history-list");box.innerHTML="";if(!S.history.length){box.innerHTML='<div class="layer-empty">Actions will appear here.</div>';return}S.history.forEach((h,i)=>{const b=document.createElement("button");b.className="history-item"+(i===historyIndex?" current":"");b.textContent=h.label;b.onclick=()=>{historyIndex=i;restore(S.history[i]);renderHistory()};box.append(b)})}
+function createDoc(w,h,name="Untitled-1"){S.w=w;S.h=h;S.name=name;S.layers=[];S.adjust={brightness:100,contrast:100,saturation:100,hue:0};const l=addLayer("Background");l.kind="pixel";S.zoom=Math.min(1,(scroll.clientWidth-80)/w,(scroll.clientHeight-80)/h);S.zoom=Math.max(.05,S.zoom);record("New document");renderAll()}
+function newDocument(){const w=Number(prompt("Width (px)","1920"));if(!Number.isFinite(w)||w<1||w>12000)return;const h=Number(prompt("Height (px)","1080"));if(!Number.isFinite(h)||h<1||h>12000)return;createDoc(Math.round(w),Math.round(h));toast("New document created")}
+function openImage(file){if(!file)return;if(!file.type.startsWith("image/"))return toast("Choose an image file.");const url=URL.createObjectURL(file),img=new Image();img.onload=()=>{S.w=img.naturalWidth;S.h=img.naturalHeight;S.name=file.name.replace(/\.[^.]+$/,"");S.layers=[];S.adjust={brightness:100,contrast:100,saturation:100,hue:0};const l=addLayer(S.name);l.canvas.getContext("2d").drawImage(img,0,0);S.zoom=Math.max(.05,Math.min(1,(scroll.clientWidth-80)/S.w,(scroll.clientHeight-80)/S.h));S.history=[];historyIndex=-1;record("Open image");URL.revokeObjectURL(url);renderAll();toast("Image opened")};img.onerror=()=>{URL.revokeObjectURL(url);toast("Could not read this image")};img.src=url}
+function duplicateLayer(){const l=sel();if(!l)return toast("Select a layer first");const c=document.createElement("canvas");c.width=S.w;c.height=S.h;c.getContext("2d").drawImage(l.canvas,0,0);record("Duplicate layer");const n={...l,id:idCounter++,name:l.name+" copy",canvas:c,order:Math.max(...S.layers.map(x=>x.order))+1};S.layers.push(n);S.selected=n.id;renderAll()}
+function deleteLayer(){const l=sel();if(!l)return;record("Delete layer");S.layers=S.layers.filter(x=>x.id!==l.id);renumber();S.selected=S.layers.length?S.layers[S.layers.length-1].id:null;renderAll()}
+function renameLayer(l=sel()){if(!l)return;const n=prompt("Layer name",l.name);if(n){record("Rename layer");l.name=n;renderAll()}}
+function exportPng(){if(!S.w)return toast("Open an image or create a document first");const out=document.createElement("canvas");out.width=S.w;out.height=S.h;const c=out.getContext("2d");[...S.layers].sort((a,b)=>a.order-b.order).forEach(l=>{if(!l.visible)return;c.save();c.globalAlpha=l.opacity*l.fill;c.globalCompositeOperation=l.blend;c.filter=l.id===S.selected?`brightness(${S.adjust.brightness}%) contrast(${S.adjust.contrast}%) saturate(${S.adjust.saturation}%) hue-rotate(${S.adjust.hue}deg)`:"none";c.drawImage(l.canvas,0,0);c.restore()});const a=document.createElement("a");a.download=S.name+"-export.png";a.href=out.toDataURL("image/png");a.click();toast("PNG export started")}
+function saveProject(){if(!S.w)return toast("Nothing to save");const data={format:"PIXORA",version:1,w:S.w,h:S.h,name:S.name,adjust:S.adjust,layers:S.layers.map(l=>({id:l.id,name:l.name,visible:l.visible,opacity:l.opacity,fill:l.fill,blend:l.blend,kind:l.kind,order:l.order,data:l.canvas.toDataURL("image/png")}))};const blob=new Blob([JSON.stringify(data)],{type:"application/json"});const a=document.createElement("a");a.download=S.name+".pixora";a.href=URL.createObjectURL(blob);a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast("Project saved")}
+function openProject(file){const r=new FileReader();r.onload=()=>{try{const p=JSON.parse(r.result);if(p.format!=="PIXORA")throw Error();S.w=p.w;S.h=p.h;S.name=p.name;S.adjust=p.adjust||S.adjust;S.layers=[];let n=p.layers.length;if(!n){renderAll();return}p.layers.forEach(x=>{const img=new Image();img.onload=()=>{const c=document.createElement("canvas");c.width=S.w;c.height=S.h;c.getContext("2d").drawImage(img,0,0);S.layers.push({...x,canvas:c});if(!--n){S.layers.sort((a,b)=>a.order-b.order);S.selected=S.layers[0]?.id||null;renderAll();record("Open project",false);toast("Project opened")}};img.src=x.data})}catch(e){toast("Invalid PIXORA project file")}};r.readAsText(file)}
+function fit(){if(!S.w)return;S.zoom=Math.max(.05,Math.min(1,(scroll.clientWidth-80)/S.w,(scroll.clientHeight-80)/S.h));renderCanvas()}
+function showContext(x,y,items){const m=$("context-menu");m.innerHTML="";items.forEach(([label,fn])=>{const b=document.createElement("button");b.textContent=label;b.onclick=()=>{m.classList.add("hidden");fn()};m.append(b)});m.style.left=Math.min(x,innerWidth-190)+"px";m.style.top=Math.min(y,innerHeight-150)+"px";m.classList.remove("hidden")}
+function point(e){const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)/S.zoom,y:(e.clientY-r.top)/S.zoom}}
+function applyTool(e){const l=sel();if(!l)return;const p=point(e),c=l.canvas.getContext("2d");if(S.tool==="brush"||S.tool==="eraser"){c.save();c.globalCompositeOperation=S.tool==="eraser"?"destination-out":"source-over";c.strokeStyle=$("fg-color").value;c.lineWidth=Number($("brush-size")?.value||18)/S.zoom;c.lineCap="round";c.lineJoin="round";c.beginPath();c.moveTo(S.last.x,S.last.y);c.lineTo(p.x,p.y);c.stroke();c.restore();S.last=p;renderCanvas()}else if(S.tool==="eyedropper"){const d=ctx.getImageData(Math.max(0,Math.min(S.w-1,Math.round(p.x))),Math.max(0,Math.min(S.h-1,Math.round(p.y))),1,1).data;$("fg-color").value="#"+[d[0],d[1],d[2]].map(x=>x.toString(16).padStart(2,"0")).join("");toast("Foreground color sampled")}else if(S.tool==="text"){const text=prompt("Text to add");if(text){record("Add text");c.save();c.fillStyle=$("fg-color").value;c.font=`${Math.max(20,Math.round(S.w/35))}px Arial`;c.textBaseline="top";c.fillText(text,p.x,p.y);c.restore();l.name="Type layer";l.kind="text";renderAll()}}}
+$("open-btn").onclick=$("welcome-open").onclick=()=>$("file-input").click();$("file-input").onchange=e=>{openImage(e.target.files[0]);e.target.value=""};$("new-btn").onclick=$("welcome-new").onclick=newDocument;$("export-btn")?.addEventListener("click",exportPng);
+$("new-layer").onclick=()=>{if(!S.w)return newDocument();record("New layer");addLayer("Layer "+idCounter);renderAll()};$("duplicate-layer").onclick=duplicateLayer;$("delete-layer").onclick=$("trash-layer").onclick=deleteLayer;$("layer-menu").onclick=e=>showContext(e.clientX,e.clientY,[["Rename layer",()=>renameLayer()],["Duplicate layer",duplicateLayer],["Delete layer",deleteLayer],["New blank layer",()=>$("new-layer").click()]]);
+$("layer-search").oninput=renderLayers;$("opacity").oninput=e=>{const l=sel();if(l){l.opacity=Number(e.target.value)/100;$("opacity-label").textContent=e.target.value+"%";renderCanvas()}};$("opacity").onchange=()=>record("Change opacity");$("fill").oninput=e=>{const l=sel();if(l){l.fill=Number(e.target.value)/100;$("fill-label").textContent=e.target.value+"%";renderCanvas()}};$("fill").onchange=()=>record("Change fill");$("blend-mode").onchange=e=>{const l=sel();if(l){record("Change blend mode");l.blend=e.target.value;renderAll()}};
+["brightness","contrast","saturation","hue"].forEach(k=>{$(k).oninput=e=>{S.adjust[k]=Number(e.target.value);$(k+"-label").textContent=k==="hue"?e.target.value+"°":e.target.value+"%";renderCanvas()};$(k).onchange=()=>record("Adjust "+k)});$("reset-adjustments").onclick=()=>{record("Reset adjustments");S.adjust={brightness:100,contrast:100,saturation:100,hue:0};renderAll()};
+$("resize-canvas").onclick=()=>{if(!S.w)return;const w=Number($("canvas-width").value),h=Number($("canvas-height").value);if(w<1||h<1||w>12000||h>12000)return toast("Dimensions must be between 1 and 12000 px");record("Resize canvas");S.layers.forEach(l=>{const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(l.canvas,0,0);l.canvas=c});S.w=w;S.h=h;renderAll()};
+$("zoom-plus").onclick=()=>{S.zoom=Math.min(4,S.zoom*1.2);renderCanvas()};$("zoom-minus").onclick=()=>{S.zoom=Math.max(.05,S.zoom/1.2);renderCanvas()};$("zoom-fit").onclick=fit;$("close-doc").onclick=()=>{if(confirm("Close current document? Unsaved changes may be lost.")){S.w=S.h=0;S.layers=[];S.selected=null;S.name="Untitled-1";S.history=[];historyIndex=-1;renderAll()}};
+$("swap-colors").onclick=()=>{const a=$("fg-color").value;$("fg-color").value=$("bg-color").value;$("bg-color").value=a};$("reset-colors").onclick=()=>{$("fg-color").value="#ffffff";$("bg-color").value="#111111"};
+document.querySelectorAll(".tool").forEach(b=>b.onclick=()=>{S.tool=b.dataset.tool;document.querySelectorAll(".tool").forEach(x=>x.classList.toggle("active",x===b));renderCanvas();syncUI();if(!["move","brush","eraser","text","eyedropper","hand","zoom"].includes(S.tool))toast(b.title+" — this tool is planned for a later module.")});
+document.querySelectorAll(".dock-tabs button").forEach(b=>b.onclick=()=>{document.querySelectorAll(".dock-tabs button").forEach(x=>x.classList.toggle("selected",x===b));["layers","properties","history"].forEach(n=>$("dock-"+n).classList.toggle("hidden",n!==b.dataset.dock))});
+canvas.addEventListener("pointerdown",e=>{if(!S.w)return;if(S.tool==="zoom"){S.zoom=Math.min(4,S.zoom*1.25);renderCanvas();return}if(S.tool==="hand"){scroll.scrollBy({left:-e.movementX,top:-e.movementY});return}if(S.tool==="brush"||S.tool==="eraser"){const l=sel();if(!l)return;record(S.tool==="brush"?"Brush stroke":"Erase stroke");S.drawing=true;S.last=point(e);canvas.setPointerCapture(e.pointerId);applyTool(e)}else if(S.tool==="eyedropper"||S.tool==="text")applyTool(e)});
+canvas.addEventListener("pointermove",e=>{if(S.drawing)applyTool(e)});canvas.addEventListener("pointerup",()=>{S.drawing=false;S.last=null;renderLayers()});canvas.addEventListener("pointercancel",()=>{S.drawing=false;S.last=null});
+document.querySelectorAll(".menubar button[data-menu]").forEach(b=>b.onclick=e=>{const menu=b.dataset.menu;const map={File:[["New document",newDocument],["Open image",()=>$("file-input").click()],["Open PIXORA project",()=>$("project-input").click()],["Save project (.pixora)",saveProject],["Export PNG",exportPng],["Close document",()=>$("close-doc").click()]],Edit:[["Undo",()=>toast("Undo stack refinement is coming in the next module.")],["Fill with foreground",()=>fillLayer($("fg-color").value)],["Reset colors",()=>$("reset-colors").click()]],Image:[["Image size / canvas size",()=>$("resize-canvas").click()],["Reset adjustments",()=>$("reset-adjustments").click()]],Layer:[["New layer",()=>$("new-layer").click()],["Duplicate layer",duplicateLayer],["Rename layer",renameLayer],["Delete layer",deleteLayer]],Type:[["Add text",()=>{S.tool="text";toast("Click the canvas to place text.")}]],Select:[["Deselect",()=>toast("No active selection")]],Filter:[["Grayscale",()=>filterImage("grayscale(1)","Grayscale filter")],["Sepia",()=>filterImage("sepia(1)","Sepia filter")],["Invert",()=>filterImage("invert(1)","Invert filter")]],View:[["Zoom in",()=>$("zoom-plus").click()],["Zoom out",()=>$("zoom-minus").click()],["Fit on screen",fit]],Window:[["Layers panel",()=>document.querySelector('[data-dock="layers"]').click()],["Properties panel",()=>document.querySelector('[data-dock="properties"]').click()],["History panel",()=>document.querySelector('[data-dock="history"]').click()]],Help:[["About PIXORA",()=>toast("PIXORA beta — built module by module.")]]};showContext(e.clientX,e.clientY,map[menu]||[])});
+function fillLayer(color){const l=sel();if(!l)return;record("Fill layer");const c=l.canvas.getContext("2d");c.save();c.globalCompositeOperation="source-over";c.fillStyle=color;c.fillRect(0,0,S.w,S.h);c.restore();renderAll()}
+function filterImage(filter,label){const l=sel();if(!l)return;record(label);const temp=document.createElement("canvas");temp.width=S.w;temp.height=S.h;const c=temp.getContext("2d");c.filter=filter;c.drawImage(l.canvas,0,0);l.canvas=temp;renderAll();toast(label+" applied to selected layer")}
+$("project-input").onchange=e=>{if(e.target.files[0])openProject(e.target.files[0]);e.target.value=""};
+$("share-btn").onclick=()=>toast("To share PIXORA, share your deployed GitHub Pages URL.");$("help-btn").onclick=()=>toast("PIXORA beta: Open, layers, brush, eraser, text, adjustments, project save, and PNG export are available.");$("minimize-btn").onclick=fit;$("clear-history").onclick=()=>{S.history=[];historyIndex=-1;renderHistory();toast("History cleared")};
+document.addEventListener("click",e=>{if(!e.target.closest(".context-menu")&&!e.target.closest(".menubar button")&&!e.target.closest("#layer-menu"))$("context-menu").classList.add("hidden")});
+document.addEventListener("keydown",e=>{if(["INPUT","TEXTAREA","SELECT"].includes(document.activeElement.tagName))return;const k=e.key.toLowerCase(),mod=e.ctrlKey||e.metaKey;if(mod&&k==="o"){e.preventDefault();$("file-input").click()}else if(mod&&k==="n"){e.preventDefault();newDocument()}else if(mod&&k==="s"){e.preventDefault();saveProject()}else if(k==="b")document.querySelector('[data-tool="brush"]').click();else if(k==="e")document.querySelector('[data-tool="eraser"]').click();else if(k==="v")document.querySelector('[data-tool="move"]').click();else if(k==="t")document.querySelector('[data-tool="text"]').click();else if(k==="z")document.querySelector('[data-tool="zoom"]').click();else if(k==="c")document.querySelector('[data-tool="crop"]').click();else if(k==="delete"||k==="backspace")deleteLayer();else if(k==="escape")$("context-menu").classList.add("hidden")});
+if("serviceWorker"in navigator&&location.protocol.startsWith("http"))addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
+renderAll();
 })();
