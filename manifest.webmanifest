@@ -1,0 +1,14 @@
+{
+  "name": "PIXORA Studio",
+  "short_name": "PIXORA",
+  "description": "A browser-based image editor starter.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#111317",
+  "theme_color": "#15171b",
+  "icons": [
+    {"src":"./icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}
